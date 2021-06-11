@@ -1,6 +1,6 @@
 {
   "name": "difflib-ts",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Port of qiao/difflib to Typescript and modern node and browser support",
   "scripts": {
     "clean": "rimraf dist",
@@ -9,7 +9,7 @@
     "rollup": "npm-run-all --parallel rollup-cjs rollup-es",
     "build": "cross-env NODE_ENV=production npm-run-all clean rollup",
     "test": "jest",
-    "prepare": "npm run build"
+    "prepack": "npm run build"
   },
   "author": {
     "name": "George Borrelli",
