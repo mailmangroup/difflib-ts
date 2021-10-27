@@ -43,8 +43,8 @@
   "module": "dist/index.es.js",
   "types": "./dist/index.d.ts",
   "browser": {
-    "dist/index.es.js": "dist/index.browser.es.js",
-    "dist/index.cjs.js": "dist/index.browser.cjs.js"
+    "dist/index.es.js": "./dist/index.browser.es.js",
+    "dist/index.cjs.js": "./dist/index.browser.cjs.js"
   },
   "files": [
     "dist"
