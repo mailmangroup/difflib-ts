@@ -23,6 +23,7 @@
     "allowSyntheticDefaultImports": true,
     "lib": ["es2017", "DOM"],
     "declaration": true,
+    "rootDir": "src",
     "declarationDir": "dist"
   },
   "include": ["src/**/*.ts"],
