@@ -2,14 +2,6 @@
   "name": "difflib-ts",
   "version": "1.0.3",
   "description": "Port of qiao/difflib to Typescript and modern node and browser support",
-  "scripts": {
-    "clean": "rimraf dist",
-    "rollup": "rollup -c config/rollup.config.js",
-    "build": "npm run clean && npm run rollup",
-    "benchmark": "npm run build && node benchmark/performance.mjs",
-    "test": "jest",
-    "prepack": "npm run build"
-  },
   "author": {
     "name": "George Borrelli",
     "url": "https://github.com/borie88"
@@ -18,20 +10,11 @@
     "type": "git",
     "url": "https://github.com/mailmangroup/difflib-ts.git"
   },
-  "dependencies": {},
-  "devDependencies": {
-    "@types/jest": "^29.5.14",
-    "@typescript-eslint/eslint-plugin": "^8.14.0",
-    "@typescript-eslint/parser": "^8.14.0",
-    "eslint": "^9.14.0",
-    "jest": "^29.7.0",
-    "rimraf": "^6.0.1",
-    "rollup": "^4.26.0",
-    "rollup-plugin-typescript2": "^0.36.0",
-    "ts-jest": "^29.2.5",
-    "typescript": "^5.6.3"
-  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -42,8 +25,33 @@
       "require": "./dist/index.cjs"
     }
   },
-  "sideEffects": false,
-  "files": [
-    "dist"
-  ]
+  "scripts": {
+    "build": "tsdown",
+    "benchmark": "npm run build && node benchmark/performance.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run build",
+    "prepack": "npm run build"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "oxfmt": "^0.67.0",
+    "oxlint": "^1.82.0",
+    "tsdown": "^0.23.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.0",
+    "vitest": "^5.0.0"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "^24.11.0",
+      "onFail": "error"
+    }
+  }
 }
