@@ -1,7 +1,10 @@
-import config from './rollup.config';
+import config from './rollup.config.js';
 
-export default config( {
-  format: 'es',
-  file: 'dist/index.es.js',
-  browser: false
-} );
+export default {
+  ...config,
+  output: {
+    format: 'es',
+    file: 'dist/index.js',
+    sourcemap: true
+  }
+};

@@ -1,7 +1,15 @@
-import config from './rollup.config';
+import config from './rollup.config.js';
 
-export default config( {
-  format: 'cjs',
-  file: 'dist/index.browser.cjs.js',
-  browser: true
-} );
+/**
+ * @type {import('rollup').RollupOptions}
+ */
+const options = {
+  ...config,
+  output: {
+    format: 'cjs',
+    file: 'dist/index.browser.cjs',
+    sourcemap: true
+  }
+};
+
+export default options;

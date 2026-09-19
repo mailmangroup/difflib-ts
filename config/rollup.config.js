@@ -1,18 +1,27 @@
 import typescript from 'rollup-plugin-typescript2';
-// import { terser } from 'rollup-plugin-terser';
-import pkg from '../package.json';
 
-export default config => ( {
+/**
+ * @type {import('rollup').RollupOptions}
+ */
+const config = {
   input: 'src/index.ts', // our source file
-  output: {
-    format: config.format,
-    file: config.file
-  },
-  external: [
-    ...Object.keys( pkg.dependencies || {} )
+  output: [
+    {
+      format: 'cjs',
+      file: 'dist/index.cjs',
+      sourcemap: true
+    },
+    {
+      format: 'es',
+      file: 'dist/index.js',
+      sourcemap: true
+    }
   ],
   plugins: [
-    typescript()
-    // terser() // minifies generated bundles,
- ]
-} );
+    typescript({
+      clean: true
+    })
+  ]
+};
+
+export default config;

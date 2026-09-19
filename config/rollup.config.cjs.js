@@ -1,7 +1,10 @@
-import config from './rollup.config';
+import config from './rollup.config.js';
 
-export default config( {
-  format: 'cjs',
-  file: 'dist/index.cjs.js',
-  browser: false
-} );
+export default {
+  ...config,
+  output: {
+    format: 'cjs',
+    file: 'dist/index.cjs',
+    sourcemap: true
+  }
+};
