@@ -33,6 +33,8 @@ describe('general', () => {
 
     expect(getCloseMatches('wheel', KEYWORDS)).toEqual(['when', 'while']);
     expect(getCloseMatches('accost', KEYWORDS)).toEqual(['const']);
+
+    expect(getCloseMatches('a', ['b', 'd', 'c'], 2, 0)).toEqual(['d', 'c']);
   });
 
   test('_countLeading', () => {
@@ -108,6 +110,19 @@ describe('general', () => {
         '! tree\n',
         '  four\n'
       ]);
+  });
+
+  test('contextDiff emits every separated change group', () => {
+    const a = Array.from({ length: 20 }, (_, index) => `${index}\n`);
+    const b = a.slice();
+    b[2] = 'two\n';
+    b[17] = 'seventeen\n';
+
+    const result = contextDiff(a, b);
+
+    expect(result.filter((line) => line === '***************\n')).toHaveLength(2);
+    expect(result).toContain('! 2\n');
+    expect(result).toContain('! 17\n');
   });
 
   test('ndiff', () => {

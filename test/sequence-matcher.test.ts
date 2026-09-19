@@ -111,4 +111,74 @@ describe('SequenceMatcher', () => {
     const s = new SequenceMatcher(null, 'abcd', 'bcde');
     expect(s.realQuickRatio()).toEqual(1.0);
   });
+
+  test('builds the accurate-match index lazily', () => {
+    const isjunk = jest.fn(() => false);
+    const s = new SequenceMatcher(isjunk, 'abcd', 'bcde');
+
+    expect(isjunk).not.toHaveBeenCalled();
+    expect(s.realQuickRatio()).toEqual(1.0);
+    expect(isjunk).not.toHaveBeenCalled();
+    expect(s.quickRatio()).toEqual(0.75);
+    expect(isjunk).not.toHaveBeenCalled();
+
+    expect(s.ratio()).toEqual(0.75);
+    expect(isjunk).toHaveBeenCalled();
+
+    isjunk.mockClear();
+    s.setSeq2('wxyz');
+    expect(s.realQuickRatio()).toEqual(1.0);
+    expect(isjunk).not.toHaveBeenCalled();
+    expect(s.ratio()).toEqual(0.0);
+    expect(isjunk).toHaveBeenCalled();
+  });
+
+  test('matches tokens that collide with Object prototype properties', () => {
+    const s = new SequenceMatcher(
+      null,
+      ['before', '__proto__'],
+      ['__proto__'],
+      false
+    );
+
+    expect(s.getMatchingBlocks()).toEqual([[1, 0, 1], [2, 1, 0]]);
+    expect(s.ratio()).toBeCloseTo(2 / 3);
+  });
+
+  test('initializes public index state when it is inspected', () => {
+    const isjunk = jest.fn((token: string) => token === ' ');
+    const s = new SequenceMatcher(isjunk, '', [' ', 'value']);
+
+    expect(isjunk).not.toHaveBeenCalled();
+    expect(s.b2j).toEqual({ value: [1] });
+    expect(s.isbjunk(' ')).toEqual(true);
+    expect(s.isbpopular('value')).toEqual(false);
+
+    s.setSeq2(['next']);
+    isjunk.mockClear();
+    expect(s.b2j).toEqual({ next: [0] });
+    expect(isjunk).toHaveBeenCalledWith('next');
+  });
+
+  test('initializes junk and popularity state before replacing b2j', () => {
+    const s = new SequenceMatcher(
+      (token: string) => token === ' ',
+      '',
+      [' ', 'value']
+    );
+
+    s.b2j = { value: [1] };
+
+    expect(s.b2j).toEqual({ value: [1] });
+    expect(s.isbjunk(' ')).toEqual(true);
+    expect(s.isbpopular('value')).toEqual(false);
+  });
+
+  test('ignores inherited properties after replacing b2j', () => {
+    const s = new SequenceMatcher(null, ['constructor'], ['other']);
+
+    s.b2j = { other: [0] };
+
+    expect(s.ratio()).toEqual(0);
+  });
 });

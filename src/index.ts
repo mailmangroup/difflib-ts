@@ -1,6 +1,4 @@
-import Heap from 'heap';
-import assert from 'assert';
-import { JunkOption, OpcodeName, OpcodeOperation } from './types';
+import type { JunkOption, OpcodeName, OpcodeOperation } from './types/index.js';
 const { floor, max, min } = Math;
 
 // Helper functions
@@ -20,13 +18,50 @@ export const _arrayCmp = function(a: any[], b: any[]) {
   return la - lb;
 };
 
-const _has = (obj: Record<any, any>, key: string) => Object.prototype.hasOwnProperty.call(obj, key);
+type ScoredMatch = [number, string];
 
-const _any = function(items: any[]) {
-  for (const item of items) {
-    if (item) return true;
+const _siftUp = (heap: ScoredMatch[], index: number) => {
+  const item = heap[index];
+  while (index > 0) {
+    const parentIndex = (index - 1) >> 1;
+    const parent = heap[parentIndex];
+    if (_arrayCmp(item, parent) >= 0) break;
+    heap[index] = parent;
+    index = parentIndex;
   }
-  return false;
+  heap[index] = item;
+};
+
+const _siftDown = (heap: ScoredMatch[], index: number) => {
+  const item = heap[index];
+  const length = heap.length;
+  while (true) {
+    const left = (index * 2) + 1;
+    if (left >= length) break;
+    const right = left + 1;
+    const child = right < length && _arrayCmp(heap[right], heap[left]) < 0 ? right : left;
+    if (_arrayCmp(heap[child], item) >= 0) break;
+    heap[index] = heap[child];
+    index = child;
+  }
+  heap[index] = item;
+};
+
+const _pushTopMatch = (heap: ScoredMatch[], item: ScoredMatch, limit: number) => {
+  if (heap.length < limit) {
+    heap.push(item);
+    _siftUp(heap, heap.length - 1);
+  } else if (_arrayCmp(heap[0], item) < 0) {
+    heap[0] = item;
+    _siftDown(heap, 0);
+  }
+};
+
+const _dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
+const _hasOwn = (value: object, key: PropertyKey) => Object.prototype.hasOwnProperty.call(value, key);
+
+const _extend = <T>(target: T[], source: readonly T[]) => {
+  for (const item of source) target.push(item);
 };
 
 /**
@@ -112,7 +147,19 @@ export class SequenceMatcher {
    * for x in b, b2j[x] is a list of the indices (into b)
    * at which x appears; junk elements do not appear
    */
-  b2j!: { [key: string]: any };
+  private _b2j: Record<string, number[]> = _dict<number[]>();
+
+  private b2jReady = false;
+
+  get b2j() {
+    this._ensureB2j();
+    return this._b2j;
+  }
+
+  set b2j(value: Record<string, number[]>) {
+    this._ensureB2j();
+    this._b2j = value;
+  }
 
   /**
    * for x in b, fullbcount[x] == the number of times x
@@ -155,7 +202,17 @@ export class SequenceMatcher {
    * for x in b, isbjunk(x) == isjunk(x) but much faster;
    * DOES NOT WORK for x in a!
    */
-  isbjunk!: JunkOption;
+  private _isbjunk: JunkOption = () => false;
+
+  get isbjunk() {
+    this._ensureB2j();
+    return this._isbjunk;
+  }
+
+  set isbjunk(value: JunkOption) {
+    this._ensureB2j();
+    this._isbjunk = value;
+  }
 
   /**
    * for x in b, isbpopular(x) is true if b is reasonably long
@@ -163,7 +220,17 @@ export class SequenceMatcher {
    * its elements (when autojunk is enabled).
    * DOES NOT WORK for x in a!
    */
-  isbpopular!: JunkOption;
+  private _isbpopular: JunkOption = () => false;
+
+  get isbpopular() {
+    this._ensureB2j();
+    return this._isbpopular;
+  }
+
+  set isbpopular(value: JunkOption) {
+    this._ensureB2j();
+    this._isbpopular = value;
+  }
 
   /**
    * "automatic junk heuristic" that treats popular elements as junk
@@ -269,7 +336,14 @@ export class SequenceMatcher {
     this.b = b;
     this.matchingBlocks = this.opcodes = null;
     this.fullbcount = null;
-    this._chainB();
+    this._b2j = _dict<number[]>();
+    this.b2jReady = false;
+    this._isbjunk = () => false;
+    this._isbpopular = () => false;
+  }
+
+  private _ensureB2j() {
+    if (!this.b2jReady) this._chainB();
   }
 
   // For each element x in b, set b2j[x] to a list of the indices in
@@ -300,37 +374,37 @@ export class SequenceMatcher {
     // of junk.  I.e., we don't call isjunk at all yet.  Throwing
     // out the junk later is much cheaper than building b2j "right"
     // from the start.
-    let b2j: { [key: string]: any }, elt, indices: any[];
+    let b2j: Record<string, number[]>, elt: string, indices: number[];
     const { b } = this;
-    this.b2j = b2j = {};
+    this._b2j = b2j = _dict<number[]>();
 
     for (let i = 0; i < b.length; i++) {
       elt = b[i];
-      indices = _has(b2j, elt) ? b2j[elt] : b2j[elt] = [];
+      indices = b2j[elt] ?? (b2j[elt] = []);
       indices.push(i);
     }
 
     // Purge junk elements
-    const junk: { [key: string]: boolean } = {};
+    const junk = new Set<string>();
     const { isjunk } = this;
     if (isjunk) {
       for (elt of Object.keys(b2j)) {
         if (isjunk(elt)) {
-          junk[elt] = true;
+          junk.add(elt);
           delete b2j[elt];
         }
       }
     }
 
     // Purge popular elements that are not junk
-    const popular: { [key: string]: boolean } = {};
+    const popular = new Set<string>();
     const n = b.length;
     if (this.autojunk && (n >= 200)) {
       const ntest = floor(n / 100) + 1;
       for (elt in b2j) {
         const idxs = b2j[elt];
         if (idxs.length > ntest) {
-          popular[elt] = true;
+          popular.add(elt);
           delete b2j[elt];
         }
       }
@@ -340,8 +414,9 @@ export class SequenceMatcher {
     // Sicne the number of *unique* junk elements is probably small, the
     // memory burden of keeping this set alive is likely trivial compared to
     // the size of b2j.
-    this.isbjunk = (b: string) => _has(junk, b);
-    this.isbpopular = (b: string) => _has(popular, b);
+    this._isbjunk = (token: string) => junk.has(token);
+    this._isbpopular = (token: string) => popular.has(token);
+    this.b2jReady = true;
   }
 
   /**
@@ -381,6 +456,7 @@ export class SequenceMatcher {
     blo: number,
     bhi: number
   ) {
+    this._ensureB2j();
     // CAUTION: stripping common prefix or suffix would be incorrect.
     // E.g.,
     //    ab
@@ -399,22 +475,28 @@ export class SequenceMatcher {
     // find longest junk-free match
     // during an iteration of the loop, j2len[j] = length of longest
     // junk-free match ending with a[i-1] and b[j]
-    let j2len: { [key: string]: any } = {};
+    let j2len = new Map<number, number>();
+    let newj2len = new Map<number, number>();
     for (let i = alo, end = ahi, asc = alo <= end; asc ? i < end : i > end; asc ? i++ : i--) {
       // look at all instances of a[i] in b; note that because
       // b2j has no junk keys, the loop is skipped if a[i] is junk
-      const newj2len: { [key: string]: any } = {};
-      const jarray = _has(b2j, a[i]) ? b2j[a[i]] : [];
+      const jarray = _hasOwn(b2j, a[i]) ? b2j[a[i]] : undefined;
+      if (!jarray) {
+        if (j2len.size) j2len.clear();
+        continue;
+      }
+      newj2len.clear();
       for (const j of jarray) {
         // a[i] matches b[j]
         if (j < blo) continue;
         if (j >= bhi) break;
-        const k = (newj2len[j] = (j2len[j-1] || 0) + 1);
+        const k = (j2len.get(j - 1) ?? 0) + 1;
+        newj2len.set(j, k);
         if (k > bestsize) {
           [besti, bestj, bestsize] = [(i-k)+1,(j-k)+1,k];
         }
       }
-      j2len = newj2len;
+      [j2len, newj2len] = [newj2len, j2len];
     }
 
     // Extend the best by non-junk elements on each end.  In particular,
@@ -695,7 +777,7 @@ export class SequenceMatcher {
     // without regard to order, so is clearly an upper bound
     let elt, fullbcount: { [key: string]: number };
     if (!this.fullbcount) {
-      this.fullbcount = fullbcount = {};
+      this.fullbcount = fullbcount = _dict<number>();
       for (elt of this.b) {
         fullbcount[elt] = (fullbcount[elt] || 0) + 1;
       }
@@ -704,11 +786,11 @@ export class SequenceMatcher {
     fullbcount = this.fullbcount;
     // avail[x] is the number of times x appears in 'b' less the
     // number of times we've seen it in 'a' so far ... kinda
-    const avail: { [key: string]: number } = {};
+    const avail = _dict<number>();
     let matches = 0;
     for (elt of this.a) {
       let numb;
-      if (_has(avail, elt)) {
+      if (avail[elt] !== undefined) {
         numb = avail[elt];
       } else {
         numb = fullbcount[elt] || 0;
@@ -761,9 +843,9 @@ export const getCloseMatches = function(
   word: string,
   possibilities: string[],
   n?: number,
-  cutoff?: number
+  cutoff?: number,
+  autojunk = true
 ) {
-  let x;
   if (n == null) n = 3;
   if (cutoff == null) cutoff = 0.6;
   if (!(n > 0)) {
@@ -772,20 +854,18 @@ export const getCloseMatches = function(
   if (!(0.0 <= cutoff && cutoff <= 1.0)) {
     throw new Error(`cutoff must be in [0.0, 1.0]: (${cutoff})`);
   }
-  let result = [];
-  const s = new SequenceMatcher();
+  const result: ScoredMatch[] = [];
+  const s = new SequenceMatcher(null, '', '', autojunk);
   s.setSeq2(word);
-  for (x of possibilities) {
+  for (const x of possibilities) {
     s.setSeq1(x);
-    if ((s.realQuickRatio() >= cutoff) &&
-        (s.quickRatio() >= cutoff) &&
-        (s.ratio() >= cutoff)) {
-      result.push([s.ratio(), x]);
-    }
+    if (s.realQuickRatio() < cutoff || s.quickRatio() < cutoff) continue;
+    const ratio = s.ratio();
+    if (ratio >= cutoff) _pushTopMatch(result, [ratio, x], n);
   }
 
   // Move the best scorers to head of list
-  result = Heap.nlargest(result, n, _arrayCmp);
+  result.sort(_arrayCmp).reverse();
   const results = [];
   // Strip scores for the best n matches
   for (const res of result) {
@@ -952,12 +1032,16 @@ export class Differ {
    * Generate comparison results for a same-tagged range.
    */
   _dump(tag: string, x: string[], lo: number, hi: number) {
-    return (__range__(lo, hi, false).map((i) => `${tag} ${x[i]}`));
+    const lines: string[] = [];
+    for (let i = lo; i < hi; i++) lines.push(`${tag} ${x[i]}`);
+    return lines;
   }
 
   _plainReplace(a: string[], alo: number, ahi: number, b: string[], blo: number, bhi: number) {
     let first, second;
-    assert((alo < ahi) && (blo < bhi));
+    if (!(alo < ahi && blo < bhi)) {
+      throw new Error('plain replacement requires two non-empty ranges');
+    }
     // dump the shorter block first -- reduces the burden on short-term
     // memory if the blocks are of very different sizes
     if ((bhi - blo) < (ahi - alo)) {
@@ -995,117 +1079,72 @@ export class Differ {
     blo: number,
     bhi: number
   ): string[] {
-
-    // don't synch up unless the lines have a similarity score of at
-    // least cutoff; best_ratio tracks the best score seen so far
-    let besti: number, bestj: number | null, line;
-    // eslint-disable-next-line prefer-const
-    let [bestRatio, cutoff] = [0.74, 0.75];
+    // Limit synchronization to nearby lines. The previous all-pairs search
+    // recursively processed both sides and could become cubic.
+    const cutoff = 0.74999;
+    const window = 10;
     const cruncher = new SequenceMatcher(this.charjunk);
-    let [eqi, eqj]: [null | number, null | number] = [null, null]; // 1st indices of equal lines (if any)
-    const lines = [];
+    const lines: string[] = [];
+    let besti: number | null = null;
+    let bestj: number | null = null;
+    let dumpi = alo;
+    let dumpj = blo;
 
-    // search for the pair that matches best without being identical
-    // (identical lines must be junk lines, & we don't want to synch up
-    // on junk -- unless we have to)
-    for (let j = blo, end = bhi, asc = blo <= end; asc ? j < end : j > end; asc ? j++ : j--) {
-      const bj = b[j];
-      cruncher.setSeq2(bj);
-      for (let i = alo, end1 = ahi, asc1 = alo <= end1; asc1 ? i < end1 : i > end1; asc1 ? i++ : i--) {
-        const ai = a[i];
-        if (ai === bj) {
-          if (eqi === null) {
-            [eqi, eqj] = [i, j];
+    for (let j = blo; j < bhi; j++) {
+      cruncher.setSeq2(b[j]);
+      const equivalent = alo + (j - blo);
+      const start = max(equivalent - window, dumpi);
+      const stop = min(equivalent + window + 1, ahi);
+      if (start >= stop) break;
+
+      let bestRatio = cutoff;
+      for (let i = start; i < stop; i++) {
+        cruncher.setSeq1(a[i]);
+        if (cruncher.realQuickRatio() <= bestRatio || cruncher.quickRatio() <= bestRatio) continue;
+        const ratio = cruncher.ratio();
+        if (ratio > bestRatio) {
+          [besti, bestj, bestRatio] = [i, j, ratio];
+        }
+      }
+      if (besti === null || bestj === null) continue;
+
+      _extend(lines, this._fancyHelper(a, dumpi, besti, b, dumpj, bestj));
+      const [aelt, belt] = [a[besti], b[bestj]];
+      if (aelt === belt) {
+        lines.push('  ' + aelt);
+      } else {
+        let atags = '';
+        let btags = '';
+        cruncher.setSeqs(aelt, belt);
+        for (const [tag, ai1, ai2, bj1, bj2] of cruncher.getOpcodes()) {
+          const [la, lb] = [ai2 - ai1, bj2 - bj1];
+          switch (tag) {
+            case 'replace':
+              atags += '^'.repeat(la);
+              btags += '^'.repeat(lb);
+              break;
+            case 'delete':
+              atags += '-'.repeat(la);
+              break;
+            case 'insert':
+              btags += '+'.repeat(lb);
+              break;
+            case 'equal':
+              atags += ' '.repeat(la);
+              btags += ' '.repeat(lb);
+              break;
+            default:
+              throw new Error(`unknown tag (${tag})`);
           }
-          continue;
         }
-        cruncher.setSeq1(ai);
-
-        // computing similarity is expensive, so use the quick
-        // upper bounds first -- have seen this speed up messy
-        // compares by a factor of 3.
-        // note that ratio() is only expensive to compute the first
-        // time it's called on a sequence pair; the expensive part
-        // of the computation is cached by cruncher
-        if ((cruncher.realQuickRatio() > bestRatio) &&
-            (cruncher.quickRatio() > bestRatio) &&
-            (cruncher.ratio() > bestRatio)) {
-          [bestRatio, besti, bestj] = [cruncher.ratio(), i, j];
-        }
+        _extend(lines, this._qformat(aelt, belt, atags, btags));
       }
+
+      [dumpi, dumpj] = [besti + 1, bestj + 1];
+      besti = bestj = null;
     }
 
-    if (bestRatio < cutoff) {
-      // no non-identical "pretty close" pair
-      if (eqi === null) {
-        // no identical pair either -- treat it as a straight replace
-        for (line of this._plainReplace(a, alo, ahi, b, blo, bhi)) {
-          lines.push(line);
-        }
-        return lines;
-      }
-      // no close pair, but an identical pair -- synch up on that
-      [besti, bestj, bestRatio] = [eqi, eqj, 1.0];
-    } else {
-      // there's a close pair, so forget the identical pair (if any)
-      eqi = null;
-    }
-
-    // a[besti] very similar to b[bestj]; eqi is null iff they're not
-    // identical
-
-    // pump out diffs from before the sync point
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    for (line of this._fancyHelper(a, alo, besti, b, blo, (bestj as number))) {
-      lines.push(line);
-    }
-
-    // do intraline marking on the sync pair
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    const [aelt, belt] = [a[besti], b[bestj as number]];
-    if (eqi === null) {
-      // pump out a '-', '?', '+', '?' quad for the synched lines
-      let btags;
-      let atags = btags = '';
-      cruncher.setSeqs(aelt, belt);
-      for (const [tag, ai1, ai2, bj1, bj2] of cruncher.getOpcodes()) {
-        const [la, lb] = [ai2 - ai1, bj2 - bj1];
-        switch (tag) {
-          case 'replace':
-            atags += Array(la+1).join('^');
-            btags += Array(lb+1).join('^');
-            break;
-          case 'delete':
-            atags += Array(la+1).join('-');
-            break;
-          case 'insert':
-            btags += Array(lb+1).join('+');
-            break;
-          case 'equal':
-            atags += Array(la+1).join(' ');
-            btags += Array(lb+1).join(' ');
-            break;
-          default:
-            throw new Error(`unknown tag (${tag})`);
-        }
-      }
-      for (line of this._qformat(aelt, belt, atags, btags)) {
-        lines.push(line);
-      }
-    } else {
-      // the synch pair is identical
-      lines.push('  ' + aelt);
-    }
-
-    // pump out diffs from after the synch point
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    for (line of this._fancyHelper(a, besti+1, ahi, b, bestj+1, bhi)) {
-      lines.push(line);
-    }
-
+    _extend(lines, this._fancyHelper(a, dumpi, ahi, b, dumpj, bhi));
     return lines;
   }
 
@@ -1113,7 +1152,7 @@ export class Differ {
     let g: string[] = [];
     if (alo < ahi) {
       if (blo < bhi) {
-        g = this._fancyReplace(a, alo, ahi, b, blo, bhi);
+        g = this._plainReplace(a, alo, ahi, b, blo, bhi);
       } else {
         g = this._dump('-', a, alo, ahi);
       }
@@ -1147,12 +1186,12 @@ export class Differ {
 
     lines.push('- ' + aline);
     if (atags.length) {
-      lines.push(`? ${Array(common+1).join('\t')}${atags}\n`);
+      lines.push(`? ${'\t'.repeat(common)}${atags}\n`);
     }
 
     lines.push('+ ' + bline);
     if (btags.length) {
-      lines.push(`? ${Array(common+1).join('\t')}${btags}\n`);
+      lines.push(`? ${'\t'.repeat(common)}${btags}\n`);
     }
     return lines;
   }
@@ -1291,16 +1330,15 @@ export const unifiedDiff = function(
     lines.push(`@@ -${file1Range} +${file2Range} @@${lineterm}`);
 
     for (const [tag, i1, i2, j1, j2] of group) {
-      let line;
       if (tag === 'equal') {
-        for (line of a.slice(i1, i2)) { lines.push(' ' + line); }
+        for (let i = i1; i < i2; i++) lines.push(' ' + a[i]);
         continue;
       }
       if (['replace', 'delete'].includes(tag)) {
-        for (line of a.slice(i1, i2)) { lines.push('-' + line); }
+        for (let i = i1; i < i2; i++) lines.push('-' + a[i]);
       }
       if (['replace', 'insert'].includes(tag)) {
-        for (line of b.slice(j1, j2)) { lines.push('+' + line); }
+        for (let j = j1; j < j2; j++) lines.push('+' + b[j]);
       }
     }
   }
@@ -1373,7 +1411,6 @@ export const contextDiff = function(
     lineterm?: string
   }
 ) {
-  let tag, _;
   if (param == null) { param = {}; }
   let { fromfile, tofile, fromfiledate, tofiledate, n, lineterm } = param;
   if (fromfile == null) {     fromfile = ''; }
@@ -1383,11 +1420,12 @@ export const contextDiff = function(
   if (n == null) {            n = 3; }
   if (lineterm == null) {     lineterm = '\n'; }
 
-  const prefix = {
+  const prefix: Record<OpcodeName, string> = {
     insert  : '+ ',
     delete  : '- ',
     replace : '! ',
-    equal   : '  '
+    equal   : '  ',
+    ''      : ''
   };
   let started = false;
   const lines = [];
@@ -1399,50 +1437,26 @@ export const contextDiff = function(
       lines.push(`*** ${fromfile}${fromdate}${lineterm}`);
       lines.push(`--- ${tofile}${todate}${lineterm}`);
 
-      const [first, last] = [group[0], group[group.length-1]];
-      lines.push('***************' + lineterm);
+    }
 
-      const file1Range = _formatRangeContext(first[1], last[2]);
-      lines.push(`*** ${file1Range} ****${lineterm}`);
+    const [first, last] = [group[0], group[group.length-1]];
+    lines.push('***************' + lineterm);
 
-      if (_any((() => {
-        const result = [];
-        for (const [tag] of group) {
-          result.push((['replace', 'delete'].includes(tag)));
-        }
-        return result;
-      })())) {
-        for (const [tag, i1, i2] of group) {
-          if (tag !== 'insert') {
-            for (const line of a.slice(i1, i2)) {
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-ignore
-              lines.push(prefix[tag] + line);
-            }
-          }
-        }
+    const file1Range = _formatRangeContext(first[1], last[2]);
+    lines.push(`*** ${file1Range} ****${lineterm}`);
+    if (group.some(([tag]) => tag === 'replace' || tag === 'delete')) {
+      for (const [tag, i1, i2] of group) {
+        if (tag === 'insert') continue;
+        for (let i = i1; i < i2; i++) lines.push(prefix[tag] + a[i]);
       }
+    }
 
-      const file2Range = _formatRangeContext(first[3], last[4]);
-      lines.push(`--- ${file2Range} ----${lineterm}`);
-
-      if (_any((() => {
-        const result1 = [];
-        for ([tag, _, _, _, _] of group) {
-          result1.push((['replace', 'insert'].includes(tag)));
-        }
-        return result1;
-      })())) {
-        let j1, j2;
-        for ([tag, _, _, j1, j2] of group) {
-          if (tag !== 'delete') {
-            for (const line of b.slice(j1, j2)) {
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-ignore
-              lines.push(prefix[tag] + line);
-            }
-          }
-        }
+    const file2Range = _formatRangeContext(first[3], last[4]);
+    lines.push(`--- ${file2Range} ----${lineterm}`);
+    if (group.some(([tag]) => tag === 'replace' || tag === 'insert')) {
+      for (const [tag, , , j1, j2] of group) {
+        if (tag === 'delete') continue;
+        for (let j = j1; j < j2; j++) lines.push(prefix[tag] + b[j]);
       }
     }
   }
@@ -1520,13 +1534,3 @@ export const restore = function(delta: string[], which: number) {
   }
   return lines;
 };
-
-function __range__(left: number, right: number, inclusive: boolean) {
-  const range = [];
-  const ascending = left < right;
-  const end = !inclusive ? right : ascending ? right + 1 : right - 1;
-  for (let i = left; ascending ? i < end : i > end; ascending ? i++ : i--) {
-    range.push(i);
-  }
-  return range;
-}
