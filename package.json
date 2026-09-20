@@ -1,6 +1,6 @@
 {
   "name": "@mailmangroup/difflib-ts",
-  "version": "1.0.3",
+  "version": "2.0.0-beta.1",
   "description": "Port of qiao/difflib to Typescript and modern node and browser support",
   "author": {
     "name": "George Borrelli",
