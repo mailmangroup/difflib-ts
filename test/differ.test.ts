@@ -1,3 +1,4 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { Differ } from '../src';
 
 let d: Differ;
@@ -7,9 +8,13 @@ beforeEach(() => {
 });
 
 describe('Differ', () => {
-
   test('_qformat', () => {
-    const results = d._qformat('\tabcDefghiJkl\n', '\tabcdefGhijkl\n', '  ^ ^  ^      ',   '  ^ ^  ^      ');
+    const results = d._qformat(
+      '\tabcDefghiJkl\n',
+      '\tabcdefGhijkl\n',
+      '  ^ ^  ^      ',
+      '  ^ ^  ^      '
+    );
     expect(results).toEqual([
       '- \tabcDefghiJkl\n',
       '? \t ^ ^  ^\n',
@@ -29,10 +34,7 @@ describe('Differ', () => {
   });
 
   test('compare', () => {
-    const results = d.compare(
-      ['one\n', 'two\n', 'three\n'],
-      ['ore\n', 'tree\n', 'emu\n']
-    );
+    const results = d.compare(['one\n', 'two\n', 'three\n'], ['ore\n', 'tree\n', 'emu\n']);
     expect(results).toEqual([
       '- one\n',
       '?  ^\n',
@@ -72,5 +74,30 @@ describe('Differ', () => {
       '?         ++++ ^                      ^\n',
       '+ 5. Flat is better than nested.\n'
     ]);
+  });
+
+  test('handles large repeated replacement blocks without recursive expansion', () => {
+    const count = 1000;
+    const before = Array(count).fill('0123456789\n');
+    const after = Array(count).fill('01234a56789\n');
+    const fancyReplace = vi.spyOn(d, '_fancyReplace');
+
+    const results = d.compare(before, after);
+
+    expect(fancyReplace).toHaveBeenCalledTimes(1);
+    expect(results).toHaveLength(count * 3);
+    expect(results.slice(0, 3)).toEqual(['- 0123456789\n', '+ 01234a56789\n', '?      +\n']);
+  });
+
+  test('handles replacement output larger than the function argument limit', () => {
+    const count = 70_000;
+    const before = Array(count).fill('before\n');
+    const after = Array(count).fill('after\n');
+
+    const results = d.compare(before, after);
+
+    expect(results).toHaveLength(count * 2);
+    expect(results[0]).toEqual('- before\n');
+    expect(results[results.length - 1]).toEqual('+ after\n');
   });
 });

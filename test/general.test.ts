@@ -1,3 +1,4 @@
+import { describe, expect, test } from 'vitest';
 import {
   _arrayCmp,
   getCloseMatches,
@@ -14,7 +15,6 @@ import {
 import { KEYWORDS } from './keywords';
 
 describe('general', () => {
-
   test('_arrayCmp', () => {
     expect(_arrayCmp([1, 2], [1, 2])).toEqual(0);
     expect(_arrayCmp([1, 2, 3], [1, 2, 4])).toBeLessThan(0);
@@ -28,11 +28,12 @@ describe('general', () => {
   });
 
   test('getCloseMatches', () => {
-    expect(getCloseMatches('appel', ['ape', 'apple', 'peach', 'puppy']))
-      .toEqual(['apple', 'ape']);
+    expect(getCloseMatches('appel', ['ape', 'apple', 'peach', 'puppy'])).toEqual(['apple', 'ape']);
 
     expect(getCloseMatches('wheel', KEYWORDS)).toEqual(['when', 'while']);
     expect(getCloseMatches('accost', KEYWORDS)).toEqual(['const']);
+
+    expect(getCloseMatches('a', ['b', 'd', 'c'], 2, 0)).toEqual(['d', 'c']);
   });
 
   test('_countLeading', () => {
@@ -60,16 +61,13 @@ describe('general', () => {
 
   test('_unifiedDiff', () => {
     expect(
-      unifiedDiff(
-        'one two three four'.split(' '),
-        'zero one tree four'.split(' '), {
-          fromfile: 'Original',
-          tofile: 'Current',
-          fromfiledate: '2005-01-26 23:30:50',
-          tofiledate: '2010-04-02 10:20:52',
-          lineterm: ''
-        }
-      )
+      unifiedDiff('one two three four'.split(' '), 'zero one tree four'.split(' '), {
+        fromfile: 'Original',
+        tofile: 'Current',
+        fromfiledate: '2005-01-26 23:30:50',
+        tofiledate: '2010-04-02 10:20:52',
+        lineterm: ''
+      })
     ).toEqual([
       '--- Original\t2005-01-26 23:30:50',
       '+++ Current\t2010-04-02 10:20:52',
@@ -92,57 +90,60 @@ describe('general', () => {
   test('contextDiff', () => {
     const a = ['one\n', 'two\n', 'three\n', 'four\n'];
     const b = ['zero\n', 'one\n', 'tree\n', 'four\n'];
-    expect(contextDiff(a, b, { fromfile: 'Original', tofile: 'Current' }))
-      .toEqual([
-        '*** Original\n',
-        '--- Current\n',
-        '***************\n',
-        '*** 1,4 ****\n',
-        '  one\n',
-        '! two\n',
-        '! three\n',
-        '  four\n',
-        '--- 1,4 ----\n',
-        '+ zero\n',
-        '  one\n',
-        '! tree\n',
-        '  four\n'
-      ]);
+    expect(contextDiff(a, b, { fromfile: 'Original', tofile: 'Current' })).toEqual([
+      '*** Original\n',
+      '--- Current\n',
+      '***************\n',
+      '*** 1,4 ****\n',
+      '  one\n',
+      '! two\n',
+      '! three\n',
+      '  four\n',
+      '--- 1,4 ----\n',
+      '+ zero\n',
+      '  one\n',
+      '! tree\n',
+      '  four\n'
+    ]);
+  });
+
+  test('contextDiff emits every separated change group', () => {
+    const a = Array.from({ length: 20 }, (_, index) => `${index}\n`);
+    const b = a.slice();
+    b[2] = 'two\n';
+    b[17] = 'seventeen\n';
+
+    const result = contextDiff(a, b);
+
+    expect(result.filter((line) => line === '***************\n')).toHaveLength(2);
+    expect(result).toContain('! 2\n');
+    expect(result).toContain('! 17\n');
   });
 
   test('ndiff', () => {
     const a = ['one\n', 'two\n', 'three\n'];
     const b = ['ore\n', 'tree\n', 'emu\n'];
-    expect(ndiff(a, b))
-      .toEqual([
-        '- one\n',
-        '?  ^\n',
-        '+ ore\n',
-        '?  ^\n',
-        '- two\n',
-        '- three\n',
-        '?  -\n',
-        '+ tree\n',
-        '+ emu\n'
-      ]);
+    expect(ndiff(a, b)).toEqual([
+      '- one\n',
+      '?  ^\n',
+      '+ ore\n',
+      '?  ^\n',
+      '- two\n',
+      '- three\n',
+      '?  -\n',
+      '+ tree\n',
+      '+ emu\n'
+    ]);
   });
 
   test('restore', () => {
     const a = ['one\n', 'two\n', 'three\n'];
     const b = ['ore\n', 'tree\n', 'emu\n'];
     const diff = ndiff(a, b);
-    expect(restore(diff, 1))
-      .toEqual([
-        'one\n',
-        'two\n',
-        'three\n'
-      ]);
-    expect(restore(diff, 2))
-      .toEqual([
-        'ore\n',
-        'tree\n',
-        'emu\n'
-      ]);
-    expect(() => { restore(diff, 3); }).toThrow();
+    expect(restore(diff, 1)).toEqual(['one\n', 'two\n', 'three\n']);
+    expect(restore(diff, 2)).toEqual(['ore\n', 'tree\n', 'emu\n']);
+    expect(() => {
+      restore(diff, 3);
+    }).toThrow();
   });
 });

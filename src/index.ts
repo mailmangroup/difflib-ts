@@ -1,32 +1,74 @@
-import Heap from 'heap';
-import assert from 'assert';
-import { JunkOption, OpcodeName, OpcodeOperation } from './types';
+import type { JunkOption, OpcodeName, OpcodeOperation } from './types/index.js';
 const { floor, max, min } = Math;
 
 // Helper functions
-const _calculateRatio = function(matches: number, length: number) {
+const _calculateRatio = function (matches: number, length: number) {
   if (length) {
-    return ((2.0 * matches) / length);
-  } else { return 1.0; }
+    return (2.0 * matches) / length;
+  } else {
+    return 1.0;
+  }
 };
 
-export const _arrayCmp = function(a: any[], b: any[]) {
+export const _arrayCmp = function (a: any[], b: any[]) {
   const la = a.length;
   const lb = b.length;
   for (let i = 0, end = min(la, lb), asc = 0 <= end; asc ? i < end : i > end; asc ? i++ : i--) {
-    if (a[i] < b[i]) { return -1; }
-    if (a[i] > b[i]) { return 1; }
+    if (a[i] < b[i]) {
+      return -1;
+    }
+    if (a[i] > b[i]) {
+      return 1;
+    }
   }
   return la - lb;
 };
 
-const _has = (obj: Record<any, any>, key: string) => Object.prototype.hasOwnProperty.call(obj, key);
+type ScoredMatch = [number, string];
 
-const _any = function(items: any[]) {
-  for (const item of items) {
-    if (item) return true;
+const _siftUp = (heap: ScoredMatch[], index: number) => {
+  const item = heap[index];
+  while (index > 0) {
+    const parentIndex = (index - 1) >> 1;
+    const parent = heap[parentIndex];
+    if (_arrayCmp(item, parent) >= 0) break;
+    heap[index] = parent;
+    index = parentIndex;
   }
-  return false;
+  heap[index] = item;
+};
+
+const _siftDown = (heap: ScoredMatch[], index: number) => {
+  const item = heap[index];
+  const length = heap.length;
+  while (true) {
+    const left = index * 2 + 1;
+    if (left >= length) break;
+    const right = left + 1;
+    const child = right < length && _arrayCmp(heap[right], heap[left]) < 0 ? right : left;
+    if (_arrayCmp(heap[child], item) >= 0) break;
+    heap[index] = heap[child];
+    index = child;
+  }
+  heap[index] = item;
+};
+
+const _pushTopMatch = (heap: ScoredMatch[], item: ScoredMatch, limit: number) => {
+  if (heap.length < limit) {
+    heap.push(item);
+    _siftUp(heap, heap.length - 1);
+  } else if (_arrayCmp(heap[0], item) < 0) {
+    heap[0] = item;
+    _siftDown(heap, 0);
+  }
+};
+
+const _dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
+const _hasOwn = (value: object, key: PropertyKey) =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+const _extend = <T>(target: T[], source: readonly T[]) => {
+  for (const item of source) target.push(item);
 };
 
 /**
@@ -35,7 +77,7 @@ const _any = function(items: any[]) {
  * algorithm predates, and is a little fancier than, an algorithm
  * published in the late 1980's by Ratcliff and Obershelp under the
  * hyperbolic name "gestalt pattern matching".
- * 
+ *
  * The basic idea is to find
  * the longest contiguous matching subsequence that contains no "junk"
  * elements (R-O doesn't address junk).  The same idea is then applied
@@ -53,7 +95,7 @@ const _any = function(items: any[]) {
  * ordinary text files, or maybe "<P>" lines in HTML files).  That may be
  * because this is the only method of the 3 that has a *concept* of
  * "junk" <wink>.
- * 
+ *
  * @example
  * // Example, comparing two strings, and considering blanks to be "junk":
  * isjunk = (c) -> c is ' '
@@ -64,7 +106,7 @@ const _any = function(items: any[]) {
  * // sequences.  As a rule of thumb, a .ratio() value over 0.6 means the
  * // sequences are close matches:
  * s.ratio().toPrecision(3) // '0.866'
- * 
+ *
  * // If you're only interested in where the sequences match,
  * // .getMatchingBlocks() is handy:
  * for [a, b, size] in s.getMatchingBlocks()
@@ -72,7 +114,7 @@ const _any = function(items: any[]) {
  * // a[0] and b[0] match for 8 elements
  * // a[8] and b[17] match for 21 elements
  * // a[29] and b[38] match for 0 elements
- * 
+ *
  * // Note that the last tuple returned by .get_matching_blocks() is always a
  * // dummy, (len(a), len(b), 0), and this is the only case in which the last
  * // tuple element (number of elements matched) is 0.
@@ -83,7 +125,7 @@ const _any = function(items: any[]) {
  * // equal a[0:8] b[0:8]
  * // insert a[8:8] b[8:17]
  * // equal a[8:29] b[17:38]
- * 
+ *
  * @remarks
  * See the Differ class for a fancy human-friendly file differencer, which
  * uses SequenceMatcher both to compare sequences of lines, and to compare
@@ -96,7 +138,6 @@ const _any = function(items: any[]) {
  * elements the sequences have in common; best case time is linear.
  */
 export class SequenceMatcher {
-
   /**
    * first sequence
    */
@@ -112,7 +153,19 @@ export class SequenceMatcher {
    * for x in b, b2j[x] is a list of the indices (into b)
    * at which x appears; junk elements do not appear
    */
-  b2j!: { [key: string]: any };
+  private _b2j: Record<string, number[]> = _dict<number[]>();
+
+  private b2jReady = false;
+
+  get b2j() {
+    this._ensureB2j();
+    return this._b2j;
+  }
+
+  set b2j(value: Record<string, number[]>) {
+    this._ensureB2j();
+    this._b2j = value;
+  }
 
   /**
    * for x in b, fullbcount[x] == the number of times x
@@ -131,13 +184,13 @@ export class SequenceMatcher {
   /**
    * a list of [tag, i1, i2, j1, j2] tuples, where tag is
    * one of:
-   * 
+   *
    * `replace`   a[i1...i2] should be replaced by b[j1...j2]
-   * 
+   *
    * `delete`    a[i1...i2] should be deleted
-   * 
+   *
    * `insert`    b[j1...j2] should be inserted
-   * 
+   *
    * `equal`     a[i1...i2] == b[j1...j2]
    */
   opcodes!: OpcodeOperation[] | null;
@@ -155,7 +208,17 @@ export class SequenceMatcher {
    * for x in b, isbjunk(x) == isjunk(x) but much faster;
    * DOES NOT WORK for x in a!
    */
-  isbjunk!: JunkOption;
+  private _isbjunk: JunkOption = () => false;
+
+  get isbjunk() {
+    this._ensureB2j();
+    return this._isbjunk;
+  }
+
+  set isbjunk(value: JunkOption) {
+    this._ensureB2j();
+    this._isbjunk = value;
+  }
 
   /**
    * for x in b, isbpopular(x) is true if b is reasonably long
@@ -163,7 +226,17 @@ export class SequenceMatcher {
    * its elements (when autojunk is enabled).
    * DOES NOT WORK for x in a!
    */
-  isbpopular!: JunkOption;
+  private _isbpopular: JunkOption = () => false;
+
+  get isbpopular() {
+    this._ensureB2j();
+    return this._isbpopular;
+  }
+
+  set isbpopular(value: JunkOption) {
+    this._ensureB2j();
+    this._isbpopular = value;
+  }
 
   /**
    * "automatic junk heuristic" that treats popular elements as junk
@@ -172,24 +245,24 @@ export class SequenceMatcher {
 
   /**
    * Construct a SequenceMatcher.
-   * 
+   *
    * @param isjunk - null by default, or a one-argument
    * function that takes a sequence element and returns true if the
    * element is junk.  null is equivalent to passing `(x) => 0`, i.e.
    * no elements are considered to be junk.
-   * 
+   *
    * For example, pass `(x) -> x in ' \t'`
    * if you're comparing lines as sequences of characters, and don't
    * want to sync up on blanks or hard tabs.
-   * 
+   *
    * @param a - the first of two sequences to be compared.  By
    * default, an empty string.  The elements of `a` must be hashable.  See
    * also `.setSeqs()` and `.setSeq1()`.
-   * 
+   *
    * @param b - the second of two sequences to be compared.  By
    * default, an empty string.  The elements of `b` must be hashable. See
    * also `.setSeqs()` and `.setSeq2()`.
-   * 
+   *
    * @param autojunk - should be set to false to disable the
    * "automatic junk heuristic" that treats popular elements as junk
    * (see module documentation for more information).
@@ -222,16 +295,16 @@ export class SequenceMatcher {
 
   /**
    * Set the first sequence to be compared.
-   * 
+   *
    * The second sequence to be compared is not changed.
-   * 
+   *
    * @example
    * const s = new SequenceMatcher(null, 'abcd', 'bcde')
    * s.ratio() // 0.75
-   * 
+   *
    * s.setSeq1('bcde')
    * s.ratio() // 1.0
-   * 
+   *
    * @remark
    * SequenceMatcher computes and caches detailed information about the
    * second sequence, so if you want to compare one sequence S against
@@ -246,17 +319,17 @@ export class SequenceMatcher {
   }
 
   /**
-   * Set the second sequence to be compared. 
-   * 
+   * Set the second sequence to be compared.
+   *
    * The first sequence to be compared is not changed.
-   * 
+   *
    * @example
    * const s = new SequenceMatcher(null, 'abcd', 'bcde')
    * s.ratio() // 0.75
-   * 
+   *
    * s.setSeq2('abcd')
    * s.ratio() // 1.0
-   * 
+   *
    * @remark
    * SequenceMatcher computes and caches detailed information about the
    * second sequence, so if you want to compare one sequence S against
@@ -269,7 +342,14 @@ export class SequenceMatcher {
     this.b = b;
     this.matchingBlocks = this.opcodes = null;
     this.fullbcount = null;
-    this._chainB();
+    this._b2j = _dict<number[]>();
+    this.b2jReady = false;
+    this._isbjunk = () => false;
+    this._isbpopular = () => false;
+  }
+
+  private _ensureB2j() {
+    if (!this.b2jReady) this._chainB();
   }
 
   // For each element x in b, set b2j[x] to a list of the indices in
@@ -300,37 +380,37 @@ export class SequenceMatcher {
     // of junk.  I.e., we don't call isjunk at all yet.  Throwing
     // out the junk later is much cheaper than building b2j "right"
     // from the start.
-    let b2j: { [key: string]: any }, elt, indices: any[];
+    let b2j: Record<string, number[]>, elt: string, indices: number[];
     const { b } = this;
-    this.b2j = b2j = {};
+    this._b2j = b2j = _dict<number[]>();
 
     for (let i = 0; i < b.length; i++) {
       elt = b[i];
-      indices = _has(b2j, elt) ? b2j[elt] : b2j[elt] = [];
+      indices = b2j[elt] ?? (b2j[elt] = []);
       indices.push(i);
     }
 
     // Purge junk elements
-    const junk: { [key: string]: boolean } = {};
+    const junk = new Set<string>();
     const { isjunk } = this;
     if (isjunk) {
       for (elt of Object.keys(b2j)) {
         if (isjunk(elt)) {
-          junk[elt] = true;
+          junk.add(elt);
           delete b2j[elt];
         }
       }
     }
 
     // Purge popular elements that are not junk
-    const popular: { [key: string]: boolean } = {};
+    const popular = new Set<string>();
     const n = b.length;
-    if (this.autojunk && (n >= 200)) {
+    if (this.autojunk && n >= 200) {
       const ntest = floor(n / 100) + 1;
       for (elt in b2j) {
         const idxs = b2j[elt];
         if (idxs.length > ntest) {
-          popular[elt] = true;
+          popular.add(elt);
           delete b2j[elt];
         }
       }
@@ -340,47 +420,44 @@ export class SequenceMatcher {
     // Sicne the number of *unique* junk elements is probably small, the
     // memory burden of keeping this set alive is likely trivial compared to
     // the size of b2j.
-    this.isbjunk = (b: string) => _has(junk, b);
-    this.isbpopular = (b: string) => _has(popular, b);
+    this._isbjunk = (token: string) => junk.has(token);
+    this._isbpopular = (token: string) => popular.has(token);
+    this.b2jReady = true;
   }
 
   /**
    * Find longest matching block in a[alo...ahi] and b[blo...bhi].
-   * 
+   *
    * @remarks If isjunk is not defined:
-   * 
+   *
    * Return [i,j,k] such that a[i...i+k] is equal to b[j...j+k], where
-   * 
+   *
    * alo <= i <= i+k <= ahi
-   * 
+   *
    * blo <= j <= j+k <= bhi
-   * 
+   *
    * and for all [i',j',k'] meeting those conditions,
-   * 
+   *
    * k >= k'
-   * 
+   *
    * i <= i'
-   * 
+   *
    * and if i == i', j <= j'
-   * 
+   *
    * In other words, of all maximal matching blocks, return one that
    * starts earliest in a, and of all those maximal matching blocks that
    * start earliest in a, return the one that starts earliest in b.
-   * 
+   *
    * @example
    * isjunk = (x) => x // is ' '
    * const s = new SequenceMatcher(isjunk, ' abcd', 'abcd abcd')
    * s.findLongestMatch(0, 5, 0, 9) // [1, 0, 4]
-   * 
+   *
    * const s = new SequenceMatcher(null, 'ab', 'c')
    * s.findLongestMatch(0, 2, 0, 1) // [0, 0, 0]
    */
-  findLongestMatch(
-    alo: number,
-    ahi: number,
-    blo: number,
-    bhi: number
-  ) {
+  findLongestMatch(alo: number, ahi: number, blo: number, bhi: number) {
+    this._ensureB2j();
     // CAUTION: stripping common prefix or suffix would be incorrect.
     // E.g.,
     //    ab
@@ -399,36 +476,48 @@ export class SequenceMatcher {
     // find longest junk-free match
     // during an iteration of the loop, j2len[j] = length of longest
     // junk-free match ending with a[i-1] and b[j]
-    let j2len: { [key: string]: any } = {};
+    let j2len = new Map<number, number>();
+    let newj2len = new Map<number, number>();
     for (let i = alo, end = ahi, asc = alo <= end; asc ? i < end : i > end; asc ? i++ : i--) {
       // look at all instances of a[i] in b; note that because
       // b2j has no junk keys, the loop is skipped if a[i] is junk
-      const newj2len: { [key: string]: any } = {};
-      const jarray = _has(b2j, a[i]) ? b2j[a[i]] : [];
+      const jarray = _hasOwn(b2j, a[i]) ? b2j[a[i]] : undefined;
+      if (!jarray) {
+        if (j2len.size) j2len.clear();
+        continue;
+      }
+      newj2len.clear();
       for (const j of jarray) {
         // a[i] matches b[j]
         if (j < blo) continue;
         if (j >= bhi) break;
-        const k = (newj2len[j] = (j2len[j-1] || 0) + 1);
+        const k = (j2len.get(j - 1) ?? 0) + 1;
+        newj2len.set(j, k);
         if (k > bestsize) {
-          [besti, bestj, bestsize] = [(i-k)+1,(j-k)+1,k];
+          [besti, bestj, bestsize] = [i - k + 1, j - k + 1, k];
         }
       }
-      j2len = newj2len;
+      [j2len, newj2len] = [newj2len, j2len];
     }
 
     // Extend the best by non-junk elements on each end.  In particular,
     // "popular" non-junk elements aren't in b2j, which greatly speeds
     // the inner loop above, but also means "the best" match so far
     // doesn't contain any junk *or* popular non-junk elements.
-    while ((besti > alo) && (bestj > blo) &&
-        !(isbjunk as JunkOption)(b[bestj-1]) &&
-        (a[besti-1] === b[bestj-1])) {
-      [besti, bestj, bestsize] = [besti-1, bestj-1, bestsize+1];
+    while (
+      besti > alo &&
+      bestj > blo &&
+      !(isbjunk as JunkOption)(b[bestj - 1]) &&
+      a[besti - 1] === b[bestj - 1]
+    ) {
+      [besti, bestj, bestsize] = [besti - 1, bestj - 1, bestsize + 1];
     }
-    while (((besti+bestsize) < ahi) && ((bestj+bestsize) < bhi) &&
-        !(isbjunk as JunkOption)(b[bestj+bestsize]) &&
-        (a[besti+bestsize] === b[bestj+bestsize])) {
+    while (
+      besti + bestsize < ahi &&
+      bestj + bestsize < bhi &&
+      !(isbjunk as JunkOption)(b[bestj + bestsize]) &&
+      a[besti + bestsize] === b[bestj + bestsize]
+    ) {
       bestsize++;
     }
 
@@ -439,14 +528,20 @@ export class SequenceMatcher {
     // figuring out what to do with it.  In the case of an empty
     // interesting match, this is clearly the right thing to do,
     // because no other kind of match is possible in the regions.
-    while ((besti > alo) && (bestj > blo) &&
-        (isbjunk as JunkOption)(b[bestj-1]) &&
-        (a[besti-1] === b[bestj-1])) {
-      [besti,bestj,bestsize] = [besti-1, bestj-1, bestsize+1];
+    while (
+      besti > alo &&
+      bestj > blo &&
+      (isbjunk as JunkOption)(b[bestj - 1]) &&
+      a[besti - 1] === b[bestj - 1]
+    ) {
+      [besti, bestj, bestsize] = [besti - 1, bestj - 1, bestsize + 1];
     }
-    while (((besti+bestsize) < ahi) && ((bestj+bestsize) < bhi) &&
-        (isbjunk as JunkOption)(b[bestj+bestsize]) &&
-        (a[besti+bestsize] === b[bestj+bestsize])) {
+    while (
+      besti + bestsize < ahi &&
+      bestj + bestsize < bhi &&
+      (isbjunk as JunkOption)(b[bestj + bestsize]) &&
+      a[besti + bestsize] === b[bestj + bestsize]
+    ) {
       bestsize++;
     }
 
@@ -455,20 +550,20 @@ export class SequenceMatcher {
 
   /**
    * Return list of triples describing matching subsequences.
-   * 
+   *
    * Each triple is of the form [i, j, n], and means that
    * a[i...i+n] == b[j...j+n].
-   * 
+   *
    * The triples are monotonically increasing in
    * i and in j.  it's also guaranteed that if
    * [i, j, n] and [i', j', n'] are adjacent triples in the list, and
    * the second is not the last triple in the list, then i+n != i' or
    * j+n != j'. IOW, adjacent triples never describe adjacent equal
    * blocks.
-   * 
+   *
    * The last triple is a dummy, [a.length, b.length, 0], and is the only
    * triple with n==0.
-   * 
+   *
    * @example
    * const s = new SequenceMatcher(null, 'abxcd', 'abcd')
    * s.getMatchingBlocks() // [[0, 0, 2], [3, 2, 2], [5, 4, 0]]
@@ -495,23 +590,23 @@ export class SequenceMatcher {
       // a[i+k...ahi] vs b[j+k...bhi] unknown
       if (k) {
         matchingBlocks.push(x);
-        if ((alo < i) && (blo < j)) {
+        if (alo < i && blo < j) {
           queue.push([alo, i, blo, j]);
         }
-        if (((i+k) < ahi) && ((j+k) < bhi)) {
-          queue.push([i+k, ahi, j+k, bhi]);
+        if (i + k < ahi && j + k < bhi) {
+          queue.push([i + k, ahi, j + k, bhi]);
         }
       }
     }
     matchingBlocks.sort(_arrayCmp);
 
     // It's possible that we have adjacent equal blocks in the
-    // matching_blocks list now. 
-    let i1 = (j1 = (k1 = 0));
+    // matching_blocks list now.
+    let i1 = (j1 = k1 = 0);
     const nonAdjacent = [];
     for (const [i2, j2, k2] of matchingBlocks) {
       // Is this block adjacent to i1, j1, k1?
-      if (((i1 + k1) === i2) && ((j1 + k1) === j2)) {
+      if (i1 + k1 === i2 && j1 + k1 === j2) {
         // Yes, so collapse them -- this just increases the length of
         // the first block by the length of the second, and the first
         // block so lengthened remains the block to compare against.
@@ -531,7 +626,7 @@ export class SequenceMatcher {
     }
 
     nonAdjacent.push([la, lb, 0]);
-    return this.matchingBlocks = nonAdjacent;
+    return (this.matchingBlocks = nonAdjacent);
   }
 
   /**
@@ -564,7 +659,7 @@ export class SequenceMatcher {
   getOpcodes(): OpcodeOperation[] {
     let answer: OpcodeOperation[], j;
     if (this.opcodes) return this.opcodes;
-    let i = j = 0;
+    let i = (j = 0);
     this.opcodes = answer = [];
     for (const [ai, bj, size] of this.getMatchingBlocks()) {
       // invariant:  we've pumped out correct diffs to change
@@ -573,7 +668,7 @@ export class SequenceMatcher {
       // out a diff to change a[i:ai] into b[j...bj], pump out
       // the matching block, and move [i,j] beyond the match
       let tag: OpcodeName = '';
-      if ((i < ai) && (j < bj)) {
+      if (i < ai && j < bj) {
         tag = 'replace';
       } else if (i < ai) {
         tag = 'delete';
@@ -583,7 +678,7 @@ export class SequenceMatcher {
       if (tag) {
         answer.push([tag, i, ai, j, bj]);
       }
-      [i, j] = [ai+size, bj+size];
+      [i, j] = [ai + size, bj + size];
 
       // the list of matching blocks is terminated by a
       // sentinel with size 0
@@ -630,11 +725,11 @@ export class SequenceMatcher {
     // Fixup leading and trailing groups if they show no changes.
     if (codes[0][0] === 'equal') {
       const [tag, i1, i2, j1, j2] = codes[0];
-      codes[0] = [tag, max(i1, i2-n), i2, max(j1, j2-n), j2];
+      codes[0] = [tag, max(i1, i2 - n), i2, max(j1, j2 - n), j2];
     }
-    if (codes[codes.length-1][0] === 'equal') {
-      const [tag, i1, i2, j1, j2] = codes[codes.length-1];
-      codes[codes.length-1] = [tag, i1, min(i2, i1+n), j1, min(j2, j1+n)];
+    if (codes[codes.length - 1][0] === 'equal') {
+      const [tag, i1, i2, j1, j2] = codes[codes.length - 1];
+      codes[codes.length - 1] = [tag, i1, min(i2, i1 + n), j1, min(j2, j1 + n)];
     }
 
     const nn = n + n;
@@ -643,15 +738,15 @@ export class SequenceMatcher {
     for ([tag, i1, i2, j1, j2] of codes) {
       // End the current group and start a new one whenever
       // there is a large range with no changes.
-      if ((tag === 'equal') && ((i2-i1) > nn)) {
-        group.push([tag, i1, min(i2, i1+n), j1, min(j2, j1+n)]);
+      if (tag === 'equal' && i2 - i1 > nn) {
+        group.push([tag, i1, min(i2, i1 + n), j1, min(j2, j1 + n)]);
         groups.push(group);
         group = [];
-        [i1, j1] = [max(i1, i2-n), max(j1, j2-n)];
+        [i1, j1] = [max(i1, i2 - n), max(j1, j2 - n)];
       }
       group.push([tag, i1, i2, j1, j2]);
     }
-    if (group.length && !((group.length === 1) && (group[0][0] === 'equal'))) {
+    if (group.length && !(group.length === 1 && group[0][0] === 'equal')) {
       groups.push(group);
     }
     return groups;
@@ -661,15 +756,15 @@ export class SequenceMatcher {
    * Return a measure of the sequences' similarity (float in [0,1]).
    * Where T is the total number of elements in both sequences, and
    * M is the number of matches, this is 2.0*M / T.
-   * 
+   *
    * Note that this is 1 if the sequences are identical, and 0 if
    * they have nothing in common.
-   * 
+   *
    * `.ratio()` is expensive to compute if you haven't already computed
    * `.getMatchingBlocks()` or `.getOpcodes()`, in which case you may
    * want to try `.quickRatio()` or `.realQuickRatio()` first to get an
    * upper bound.
-   * 
+   *
    * @example
    * const s = new SequenceMatcher(null, 'abcd', 'bcde')
    * s.ratio() // 0.75
@@ -695,7 +790,7 @@ export class SequenceMatcher {
     // without regard to order, so is clearly an upper bound
     let elt, fullbcount: { [key: string]: number };
     if (!this.fullbcount) {
-      this.fullbcount = fullbcount = {};
+      this.fullbcount = fullbcount = _dict<number>();
       for (elt of this.b) {
         fullbcount[elt] = (fullbcount[elt] || 0) + 1;
       }
@@ -704,11 +799,11 @@ export class SequenceMatcher {
     fullbcount = this.fullbcount;
     // avail[x] is the number of times x appears in 'b' less the
     // number of times we've seen it in 'a' so far ... kinda
-    const avail: { [key: string]: number } = {};
+    const avail = _dict<number>();
     let matches = 0;
     for (elt of this.a) {
       let numb;
-      if (_has(avail, elt)) {
+      if (avail[elt] !== undefined) {
         numb = avail[elt];
       } else {
         numb = fullbcount[elt] || 0;
@@ -743,11 +838,11 @@ export class SequenceMatcher {
  * @param [n] (default 3) is the maximum number of close matches to
  * return.  n must be > 0.
  * @param [cutoff] (default 0.6) is a float in [0, 1].
- * 
+ *
  * Possibilities that don't score at least that similar to word are ignored.
  * The best (no more than n) matches among the possibilities are returned
  * in a list, sorted by similarity score, most similar first.
- * 
+ *
  * @example
  * getCloseMatches('appel', ['ape', 'apple', 'peach', 'puppy'])
  * // ['apple', 'ape']
@@ -757,13 +852,13 @@ export class SequenceMatcher {
  * getCloseMatches('accost', KEYWORDS)
  * // ['const']
  */
-export const getCloseMatches = function(
+export const getCloseMatches = function (
   word: string,
   possibilities: string[],
   n?: number,
-  cutoff?: number
+  cutoff?: number,
+  autojunk = true
 ) {
-  let x;
   if (n == null) n = 3;
   if (cutoff == null) cutoff = 0.6;
   if (!(n > 0)) {
@@ -772,20 +867,18 @@ export const getCloseMatches = function(
   if (!(0.0 <= cutoff && cutoff <= 1.0)) {
     throw new Error(`cutoff must be in [0.0, 1.0]: (${cutoff})`);
   }
-  let result = [];
-  const s = new SequenceMatcher();
+  const result: ScoredMatch[] = [];
+  const s = new SequenceMatcher(null, '', '', autojunk);
   s.setSeq2(word);
-  for (x of possibilities) {
+  for (const x of possibilities) {
     s.setSeq1(x);
-    if ((s.realQuickRatio() >= cutoff) &&
-        (s.quickRatio() >= cutoff) &&
-        (s.ratio() >= cutoff)) {
-      result.push([s.ratio(), x]);
-    }
+    if (s.realQuickRatio() < cutoff || s.quickRatio() < cutoff) continue;
+    const ratio = s.ratio();
+    if (ratio >= cutoff) _pushTopMatch(result, [ratio, x], n);
   }
 
   // Move the best scorers to head of list
-  result = Heap.nlargest(result, n, _arrayCmp);
+  result.sort(_arrayCmp).reverse();
   const results = [];
   // Strip scores for the best n matches
   for (const res of result) {
@@ -800,10 +893,10 @@ export const getCloseMatches = function(
  * @example
  * _countLeading('   abc', ' ') // 3
  */
-export const _countLeading = function(line: string, ch: string) {
+export const _countLeading = function (line: string, ch: string) {
   let i = 0;
   const n = line.length;
-  while ((i < n) && (line[i] === ch)) {
+  while (i < n && line[i] === ch) {
     i++;
   }
   return i;
@@ -815,25 +908,25 @@ export const _countLeading = function(line: string, ch: string) {
  * `SequenceMatcher` both to compare sequences of lines, and to compare
  * sequences of characters within similar (near-matching) lines.
  * Each line of a Differ delta begins with a two-letter code:
- * 
+ *
  * `'- '    line unique to sequence 1`
- * 
+ *
  * `'+ '    line unique to sequence 2`
- * 
+ *
  * `'  '    line common to both sequences`
- * 
+ *
  * `'? '    line not present in either input sequence`
- * 
+ *
  * @remarks Lines beginning with '? ' attempt to guide the eye to intraline
  * differences, and were not present in either input sequence. These lines
  * can be confusing if the sequences contain tab characters.
- * 
+ *
  * Note that Differ makes no claim to produce a *minimal* diff.  To the
  * contrary, minimal diffs are often counter-intuitive, because they sync
  * up anywhere possible, sometimes accidental matches 100 pages apart.
  * Restricting sync points to contiguous matches preserves some notion of
  * locality, at the occasional cost of producing a longer diff.
- * 
+ *
  * @example
  * //Example: Comparing two texts.
  * text1 = ['1. Beautiful is better than ugly.\n',
@@ -841,12 +934,12 @@ export const _countLeading = function(line: string, ch: string) {
  * '3. Simple is better than complex.\n',
  * '4. Complex is better than complicated.\n']
  * text1.length // 4
- * 
+ *
  * text2 = ['1. Beautiful is better than ugly.\n',
  * '3.   Simple is better than complex.\n',
  * '4. Complicated is better than complex.\n',
  * '5. Flat is better than nested.\n']
- * 
+ *
  * // Next we instantiate a Differ object:
  * d = new Differ()
  * // Note that when instantiating a Differ object we may pass functions to
@@ -876,10 +969,7 @@ export class Differ {
   linejunk: JunkOption | null = null;
   charjunk: JunkOption | null = null;
 
-  constructor(
-    linejunk: JunkOption | null = null,
-    charjunk: JunkOption | null = null
-  ) {
+  constructor(linejunk: JunkOption | null = null, charjunk: JunkOption | null = null) {
     /*
     Construct a text differencer, with optional filters.
     The two optional keyword parameters are for filter functions:
@@ -899,13 +989,13 @@ export class Differ {
 
   /**
    * Compare two sequences of lines; generate the resulting delta.
-   * 
+   *
    * Each sequence must contain individual single-line strings ending with
    * newlines. Such sequences can be obtained from the `readlines()` method
    * of file-like objects. The delta generated also consists of newline-
    * terminated strings, ready to be printed as-is via the `writeline()`
    * method of a file-like object.
-   * 
+   *
    * @example
    * d = new Differ
    * d.compare(['one\n', 'two\n', 'three\n'],
@@ -952,24 +1042,32 @@ export class Differ {
    * Generate comparison results for a same-tagged range.
    */
   _dump(tag: string, x: string[], lo: number, hi: number) {
-    return (__range__(lo, hi, false).map((i) => `${tag} ${x[i]}`));
+    const lines: string[] = [];
+    for (let i = lo; i < hi; i++) lines.push(`${tag} ${x[i]}`);
+    return lines;
   }
 
   _plainReplace(a: string[], alo: number, ahi: number, b: string[], blo: number, bhi: number) {
     let first, second;
-    assert((alo < ahi) && (blo < bhi));
+    if (!(alo < ahi && blo < bhi)) {
+      throw new Error('plain replacement requires two non-empty ranges');
+    }
     // dump the shorter block first -- reduces the burden on short-term
     // memory if the blocks are of very different sizes
-    if ((bhi - blo) < (ahi - alo)) {
-      first  = this._dump('+', b, blo, bhi);
+    if (bhi - blo < ahi - alo) {
+      first = this._dump('+', b, blo, bhi);
       second = this._dump('-', a, alo, ahi);
     } else {
-      first  = this._dump('-', a, alo, ahi);
+      first = this._dump('-', a, alo, ahi);
       second = this._dump('+', b, blo, bhi);
     }
 
     const lines = [];
-    for (const g of [first, second]) { for (const line of g) { lines.push(line); } }
+    for (const g of [first, second]) {
+      for (const line of g) {
+        lines.push(line);
+      }
+    }
     return lines;
   }
 
@@ -978,7 +1076,7 @@ export class Differ {
    * for *similar* lines; the best-matching pair (if any) is used as a
    * sync point, and intraline difference marking is done on the
    * similar pair. Lots of work, but often worth it.
-   * 
+   *
    * @example
    * d = new Differ
    * d._fancyReplace(['abcDefghiJkl\n'], 0, 1, ['abcdefGhijkl\n'], 0, 1)
@@ -995,117 +1093,72 @@ export class Differ {
     blo: number,
     bhi: number
   ): string[] {
-
-    // don't synch up unless the lines have a similarity score of at
-    // least cutoff; best_ratio tracks the best score seen so far
-    let besti: number, bestj: number | null, line;
-    // eslint-disable-next-line prefer-const
-    let [bestRatio, cutoff] = [0.74, 0.75];
+    // Limit synchronization to nearby lines. The previous all-pairs search
+    // recursively processed both sides and could become cubic.
+    const cutoff = 0.74999;
+    const window = 10;
     const cruncher = new SequenceMatcher(this.charjunk);
-    let [eqi, eqj]: [null | number, null | number] = [null, null]; // 1st indices of equal lines (if any)
-    const lines = [];
+    const lines: string[] = [];
+    let besti: number | null = null;
+    let bestj: number | null = null;
+    let dumpi = alo;
+    let dumpj = blo;
 
-    // search for the pair that matches best without being identical
-    // (identical lines must be junk lines, & we don't want to synch up
-    // on junk -- unless we have to)
-    for (let j = blo, end = bhi, asc = blo <= end; asc ? j < end : j > end; asc ? j++ : j--) {
-      const bj = b[j];
-      cruncher.setSeq2(bj);
-      for (let i = alo, end1 = ahi, asc1 = alo <= end1; asc1 ? i < end1 : i > end1; asc1 ? i++ : i--) {
-        const ai = a[i];
-        if (ai === bj) {
-          if (eqi === null) {
-            [eqi, eqj] = [i, j];
+    for (let j = blo; j < bhi; j++) {
+      cruncher.setSeq2(b[j]);
+      const equivalent = alo + (j - blo);
+      const start = max(equivalent - window, dumpi);
+      const stop = min(equivalent + window + 1, ahi);
+      if (start >= stop) break;
+
+      let bestRatio = cutoff;
+      for (let i = start; i < stop; i++) {
+        cruncher.setSeq1(a[i]);
+        if (cruncher.realQuickRatio() <= bestRatio || cruncher.quickRatio() <= bestRatio) continue;
+        const ratio = cruncher.ratio();
+        if (ratio > bestRatio) {
+          [besti, bestj, bestRatio] = [i, j, ratio];
+        }
+      }
+      if (besti === null || bestj === null) continue;
+
+      _extend(lines, this._fancyHelper(a, dumpi, besti, b, dumpj, bestj));
+      const [aelt, belt] = [a[besti], b[bestj]];
+      if (aelt === belt) {
+        lines.push('  ' + aelt);
+      } else {
+        let atags = '';
+        let btags = '';
+        cruncher.setSeqs(aelt, belt);
+        for (const [tag, ai1, ai2, bj1, bj2] of cruncher.getOpcodes()) {
+          const [la, lb] = [ai2 - ai1, bj2 - bj1];
+          switch (tag) {
+            case 'replace':
+              atags += '^'.repeat(la);
+              btags += '^'.repeat(lb);
+              break;
+            case 'delete':
+              atags += '-'.repeat(la);
+              break;
+            case 'insert':
+              btags += '+'.repeat(lb);
+              break;
+            case 'equal':
+              atags += ' '.repeat(la);
+              btags += ' '.repeat(lb);
+              break;
+            default:
+              throw new Error(`unknown tag (${tag})`);
           }
-          continue;
         }
-        cruncher.setSeq1(ai);
-
-        // computing similarity is expensive, so use the quick
-        // upper bounds first -- have seen this speed up messy
-        // compares by a factor of 3.
-        // note that ratio() is only expensive to compute the first
-        // time it's called on a sequence pair; the expensive part
-        // of the computation is cached by cruncher
-        if ((cruncher.realQuickRatio() > bestRatio) &&
-            (cruncher.quickRatio() > bestRatio) &&
-            (cruncher.ratio() > bestRatio)) {
-          [bestRatio, besti, bestj] = [cruncher.ratio(), i, j];
-        }
+        _extend(lines, this._qformat(aelt, belt, atags, btags));
       }
+
+      [dumpi, dumpj] = [besti + 1, bestj + 1];
+      besti = bestj = null;
     }
 
-    if (bestRatio < cutoff) {
-      // no non-identical "pretty close" pair
-      if (eqi === null) {
-        // no identical pair either -- treat it as a straight replace
-        for (line of this._plainReplace(a, alo, ahi, b, blo, bhi)) {
-          lines.push(line);
-        }
-        return lines;
-      }
-      // no close pair, but an identical pair -- synch up on that
-      [besti, bestj, bestRatio] = [eqi, eqj, 1.0];
-    } else {
-      // there's a close pair, so forget the identical pair (if any)
-      eqi = null;
-    }
-
-    // a[besti] very similar to b[bestj]; eqi is null iff they're not
-    // identical
-
-    // pump out diffs from before the sync point
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    for (line of this._fancyHelper(a, alo, besti, b, blo, (bestj as number))) {
-      lines.push(line);
-    }
-
-    // do intraline marking on the sync pair
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    const [aelt, belt] = [a[besti], b[bestj as number]];
-    if (eqi === null) {
-      // pump out a '-', '?', '+', '?' quad for the synched lines
-      let btags;
-      let atags = btags = '';
-      cruncher.setSeqs(aelt, belt);
-      for (const [tag, ai1, ai2, bj1, bj2] of cruncher.getOpcodes()) {
-        const [la, lb] = [ai2 - ai1, bj2 - bj1];
-        switch (tag) {
-          case 'replace':
-            atags += Array(la+1).join('^');
-            btags += Array(lb+1).join('^');
-            break;
-          case 'delete':
-            atags += Array(la+1).join('-');
-            break;
-          case 'insert':
-            btags += Array(lb+1).join('+');
-            break;
-          case 'equal':
-            atags += Array(la+1).join(' ');
-            btags += Array(lb+1).join(' ');
-            break;
-          default:
-            throw new Error(`unknown tag (${tag})`);
-        }
-      }
-      for (line of this._qformat(aelt, belt, atags, btags)) {
-        lines.push(line);
-      }
-    } else {
-      // the synch pair is identical
-      lines.push('  ' + aelt);
-    }
-
-    // pump out diffs from after the synch point
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    for (line of this._fancyHelper(a, besti+1, ahi, b, bestj+1, bhi)) {
-      lines.push(line);
-    }
-
+    _extend(lines, this._fancyHelper(a, dumpi, ahi, b, dumpj, bhi));
     return lines;
   }
 
@@ -1113,7 +1166,7 @@ export class Differ {
     let g: string[] = [];
     if (alo < ahi) {
       if (blo < bhi) {
-        g = this._fancyReplace(a, alo, ahi, b, blo, bhi);
+        g = this._plainReplace(a, alo, ahi, b, blo, bhi);
       } else {
         g = this._dump('-', a, alo, ahi);
       }
@@ -1125,7 +1178,7 @@ export class Differ {
 
   /**
    * Format "?" output and deal with leading tabs.
-   * 
+   *
    * @example
    * d = new Differ
    * d._qformat('\tabcDefghiJkl\n', '\tabcdefGhijkl\n',
@@ -1138,8 +1191,7 @@ export class Differ {
     const lines: string[] = [];
 
     // Can hurt, but will probably help most of the time.
-    let common = min(_countLeading(aline, '\t'),
-                 _countLeading(bline, '\t'));
+    let common = min(_countLeading(aline, '\t'), _countLeading(bline, '\t'));
     common = min(common, _countLeading(atags.slice(0, common), ' '));
     common = min(common, _countLeading(btags.slice(0, common), ' '));
     atags = atags.slice(common).replace(/\s+$/, '');
@@ -1147,12 +1199,12 @@ export class Differ {
 
     lines.push('- ' + aline);
     if (atags.length) {
-      lines.push(`? ${Array(common+1).join('\t')}${atags}\n`);
+      lines.push(`? ${'\t'.repeat(common)}${atags}\n`);
     }
 
     lines.push('+ ' + bline);
     if (btags.length) {
-      lines.push(`? ${Array(common+1).join('\t')}${btags}\n`);
+      lines.push(`? ${'\t'.repeat(common)}${btags}\n`);
     }
     return lines;
   }
@@ -1175,7 +1227,7 @@ export class Differ {
 // remaining is that perhaps it was really the case that " volatile"
 // was inserted after "private".  I can live with that <wink>.
 
-export const IS_LINE_JUNK = function(line: string, pat?: RegExp) {
+export const IS_LINE_JUNK = function (line: string, pat?: RegExp) {
   if (pat == null) pat = /^\s*#?\s*$/;
   /*
   Return 1 for ignorable line: iff `line` is blank or contains a single '#'.
@@ -1200,13 +1252,12 @@ export const IS_LINE_JUNK = function(line: string, pat?: RegExp) {
  * IS_CHARACTER_JUNK('\n').should.be.false // false
  * IS_CHARACTER_JUNK('x').should.be.false // false
  */
-export const IS_CHARACTER_JUNK = function(ch: string, ws?: string) {
+export const IS_CHARACTER_JUNK = function (ch: string, ws?: string) {
   if (ws == null) ws = ' \t';
   return ws.includes(ch);
 };
 
-
-export const _formatRangeUnified = function(start: number, stop: number) {
+export const _formatRangeUnified = function (start: number, stop: number) {
   /*
   Convert range to the "ed" format'
   */
@@ -1223,9 +1274,9 @@ export const _formatRangeUnified = function(start: number, stop: number) {
  * Unified diffs are a compact way of showing line changes and a few
  * lines of context.  The number of context lines is set by 'n' which
  * defaults to three.
- * 
+ *
  * By default, the diff control lines (those with ---, +++, or @@) are
- * created with a trailing newline.  
+ * created with a trailing newline.
  * For inputs that do not have trailing newlines, set the lineterm
  * argument to "" so that the output will be uniformly newline free.
  * The unidiff format normally has a header for filenames and modification
@@ -1233,7 +1284,7 @@ export const _formatRangeUnified = function(start: number, stop: number) {
  * 'fromfile', 'tofile', 'fromfiledate', and 'tofiledate'.
  *
  * The modification times are normally expressed in the ISO 8601 format.
- * 
+ *
  * @example
  * unifiedDiff('one two three four'.split(' '),
  * ...             'zero one tree four'.split(' '), {
@@ -1253,30 +1304,44 @@ export const _formatRangeUnified = function(start: number, stop: number) {
  *   '+tree',
  *   ' four' ]
  */
-export const unifiedDiff = function(
+export const unifiedDiff = function (
   a: string | string[],
   b: string | string[],
   param?: {
-    fromfile?: string,
-    tofile?: string,
-    fromfiledate?: string,
-    tofiledate?: string,
-    n?: number,
-    lineterm?: string
+    fromfile?: string;
+    tofile?: string;
+    fromfiledate?: string;
+    tofiledate?: string;
+    n?: number;
+    lineterm?: string;
   }
 ) {
-  if (param == null) { param = {}; }
+  if (param == null) {
+    param = {};
+  }
   let { fromfile, tofile, fromfiledate, tofiledate, n, lineterm } = param;
-  if (fromfile == null) {     fromfile = ''; }
-  if (tofile == null) {       tofile = ''; }
-  if (fromfiledate == null) { fromfiledate = ''; }
-  if (tofiledate == null) {   tofiledate = ''; }
-  if (n == null) {            n = 3; }
-  if (lineterm == null) {     lineterm = '\n'; }
+  if (fromfile == null) {
+    fromfile = '';
+  }
+  if (tofile == null) {
+    tofile = '';
+  }
+  if (fromfiledate == null) {
+    fromfiledate = '';
+  }
+  if (tofiledate == null) {
+    tofiledate = '';
+  }
+  if (n == null) {
+    n = 3;
+  }
+  if (lineterm == null) {
+    lineterm = '\n';
+  }
 
   const lines = [];
   let started = false;
-  for (const group of (new SequenceMatcher(null, a, b)).getGroupedOpcodes()) {
+  for (const group of new SequenceMatcher(null, a, b).getGroupedOpcodes()) {
     if (!started) {
       started = true;
       const fromdate = fromfiledate ? `\t${fromfiledate}` : '';
@@ -1285,22 +1350,21 @@ export const unifiedDiff = function(
       lines.push(`+++ ${tofile}${todate}${lineterm}`);
     }
 
-    const [first, last] = [group[0], group[group.length-1]];
+    const [first, last] = [group[0], group[group.length - 1]];
     const file1Range = _formatRangeUnified(first[1], last[2]);
     const file2Range = _formatRangeUnified(first[3], last[4]);
     lines.push(`@@ -${file1Range} +${file2Range} @@${lineterm}`);
 
     for (const [tag, i1, i2, j1, j2] of group) {
-      let line;
       if (tag === 'equal') {
-        for (line of a.slice(i1, i2)) { lines.push(' ' + line); }
+        for (let i = i1; i < i2; i++) lines.push(' ' + a[i]);
         continue;
       }
       if (['replace', 'delete'].includes(tag)) {
-        for (line of a.slice(i1, i2)) { lines.push('-' + line); }
+        for (let i = i1; i < i2; i++) lines.push('-' + a[i]);
       }
       if (['replace', 'insert'].includes(tag)) {
-        for (line of b.slice(j1, j2)) { lines.push('+' + line); }
+        for (let j = j1; j < j2; j++) lines.push('+' + b[j]);
       }
     }
   }
@@ -1311,13 +1375,13 @@ export const unifiedDiff = function(
 /**
  * Convert range to the "ed" format'
  */
-export const _formatRangeContext = function(start: number, stop: number) {
+export const _formatRangeContext = function (start: number, stop: number) {
   // Per the diff spec at http://www.unix.org/single_unix_specification/
   let beginning = start + 1; // lines start numbering with one
   const length = stop - start;
   if (!length) beginning--; // empty ranges begin at line just before the range
   if (length <= 1) return `${beginning}`;
-  return `${beginning},${(beginning + length) - 1}`;
+  return `${beginning},${beginning + length - 1}`;
 };
 
 /**
@@ -1325,24 +1389,24 @@ export const _formatRangeContext = function(start: number, stop: number) {
  * Context diffs are a compact way of showing line changes and a few
  * lines of context. The number of context lines is set by 'n' which
  * defaults to three.
- * 
+ *
  * By default, the diff control lines (those with *** or ---) are
  * created with a trailing newline.  This is helpful so that inputs
  * created from file.readlines() result in diffs that are suitable for
  * file.writelines() since both the inputs and outputs have trailing
  * newlines.
- * 
+ *
  * For inputs that do not have trailing newlines, set the lineterm
  * argument to "" so that the output will be uniformly newline free.
  * The context diff format normally has a header for filenames and
  * modification times.  Any or all of these may be specified using
  * strings for 'fromfile', 'tofile', 'fromfiledate', and 'tofiledate'.
  * The modification times are normally expressed in the ISO 8601 format.
- * 
+ *
  * If not specified, the strings default to blanks.
- * 
+ *
  * See http://www.unix.org/single_unix_specification/
- * 
+ *
  * @example
  * a = ['one\n', 'two\n', 'three\n', 'four\n']
  * b = ['zero\n', 'one\n', 'tree\n', 'four\n']
@@ -1361,88 +1425,77 @@ export const _formatRangeContext = function(start: number, stop: number) {
  *   '! tree\n',
  *   '  four\n' ]
  */
-export const contextDiff = function(
+export const contextDiff = function (
   a: string | string[],
   b: string | string[],
   param?: {
-    fromfile?: string,
-    tofile?: string,
-    fromfiledate?: string,
-    tofiledate?: string,
-    n?: number,
-    lineterm?: string
+    fromfile?: string;
+    tofile?: string;
+    fromfiledate?: string;
+    tofiledate?: string;
+    n?: number;
+    lineterm?: string;
   }
 ) {
-  let tag, _;
-  if (param == null) { param = {}; }
+  if (param == null) {
+    param = {};
+  }
   let { fromfile, tofile, fromfiledate, tofiledate, n, lineterm } = param;
-  if (fromfile == null) {     fromfile = ''; }
-  if (tofile == null) {       tofile = ''; }
-  if (fromfiledate == null) { fromfiledate = ''; }
-  if (tofiledate == null) {   tofiledate = ''; }
-  if (n == null) {            n = 3; }
-  if (lineterm == null) {     lineterm = '\n'; }
+  if (fromfile == null) {
+    fromfile = '';
+  }
+  if (tofile == null) {
+    tofile = '';
+  }
+  if (fromfiledate == null) {
+    fromfiledate = '';
+  }
+  if (tofiledate == null) {
+    tofiledate = '';
+  }
+  if (n == null) {
+    n = 3;
+  }
+  if (lineterm == null) {
+    lineterm = '\n';
+  }
 
-  const prefix = {
-    insert  : '+ ',
-    delete  : '- ',
-    replace : '! ',
-    equal   : '  '
+  const prefix: Record<OpcodeName, string> = {
+    insert: '+ ',
+    delete: '- ',
+    replace: '! ',
+    equal: '  ',
+    '': ''
   };
   let started = false;
   const lines = [];
-  for (const group of (new SequenceMatcher(null, a, b)).getGroupedOpcodes()) {
+  for (const group of new SequenceMatcher(null, a, b).getGroupedOpcodes()) {
     if (!started) {
       started = true;
       const fromdate = fromfiledate ? `\t${fromfiledate}` : '';
       const todate = tofiledate ? `\t${tofiledate}` : '';
       lines.push(`*** ${fromfile}${fromdate}${lineterm}`);
       lines.push(`--- ${tofile}${todate}${lineterm}`);
+    }
 
-      const [first, last] = [group[0], group[group.length-1]];
-      lines.push('***************' + lineterm);
+    const [first, last] = [group[0], group[group.length - 1]];
+    lines.push('***************' + lineterm);
 
-      const file1Range = _formatRangeContext(first[1], last[2]);
-      lines.push(`*** ${file1Range} ****${lineterm}`);
-
-      if (_any((() => {
-        const result = [];
-        for (const [tag] of group) {
-          result.push((['replace', 'delete'].includes(tag)));
-        }
-        return result;
-      })())) {
-        for (const [tag, i1, i2] of group) {
-          if (tag !== 'insert') {
-            for (const line of a.slice(i1, i2)) {
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-ignore
-              lines.push(prefix[tag] + line);
-            }
-          }
-        }
+    const file1Range = _formatRangeContext(first[1], last[2]);
+    lines.push(`*** ${file1Range} ****${lineterm}`);
+    if (group.some(([tag]) => tag === 'replace' || tag === 'delete')) {
+      for (const [tag, i1, i2] of group) {
+        if (tag === 'insert') continue;
+        for (let i = i1; i < i2; i++) lines.push(prefix[tag] + a[i]);
       }
+    }
 
-      const file2Range = _formatRangeContext(first[3], last[4]);
-      lines.push(`--- ${file2Range} ----${lineterm}`);
-
-      if (_any((() => {
-        const result1 = [];
-        for ([tag, _, _, _, _] of group) {
-          result1.push((['replace', 'insert'].includes(tag)));
-        }
-        return result1;
-      })())) {
-        let j1, j2;
-        for ([tag, _, _, j1, j2] of group) {
-          if (tag !== 'delete') {
-            for (const line of b.slice(j1, j2)) {
-              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-              // @ts-ignore
-              lines.push(prefix[tag] + line);
-            }
-          }
-        }
+    const file2Range = _formatRangeContext(first[3], last[4]);
+    lines.push(`--- ${file2Range} ----${lineterm}`);
+    if (group.some(([tag]) => tag === 'replace' || tag === 'insert')) {
+      for (const [tag, , , j1, j2] of group) {
+        if (tag === 'delete') continue;
+        for (let j = j1; j < j2; j++) lines.push(prefix[tag] + b[j]);
       }
     }
   }
@@ -1454,16 +1507,16 @@ export const contextDiff = function(
  * Compare `a` and `b` (lists of strings); return a `Differ`-style delta.
  * Optional keyword parameters `linejunk` and `charjunk` are for filter
  * functions (or None):
- * 
+ *
  * - `linejunk`: A function that should accept a single string argument, and
  *   return true iff the string is junk.  The default is null, and is
- *   recommended; 
- * 
+ *   recommended;
+ *
  * - `charjunk`: A function that should accept a string of length 1. The
  *   default is module-level function IS_CHARACTER_JUNK, which filters out
  *   whitespace characters (a blank or tab; note: bad idea to include newline
  *   in this!).
- * 
+ *
  * @example
  * a = ['one\n', 'two\n', 'three\n']
  * b = ['ore\n', 'tree\n', 'emu\n']
@@ -1478,14 +1531,14 @@ export const contextDiff = function(
  *   '+ tree\n',
  *   '+ emu\n' ]
  */
-export const ndiff = function(
+export const ndiff = function (
   a: string[],
   b: string[],
   linejunk?: (a: string) => boolean,
   charjunk?: (a: string) => boolean
 ) {
   if (charjunk == null) charjunk = IS_CHARACTER_JUNK;
-  return (new Differ(linejunk, charjunk)).compare(a, b);
+  return new Differ(linejunk, charjunk).compare(a, b);
 };
 
 /**
@@ -1493,7 +1546,7 @@ export const ndiff = function(
  * Given a `delta` produced by `Differ.compare()` or `ndiff()`, extract
  * lines originating from file 1 or 2 (parameter `which`), stripping off line
  * prefixes.
- * 
+ *
  * @example
  * a = ['one\n', 'two\n', 'three\n']
  * b = ['ore\n', 'tree\n', 'emu\n']
@@ -1507,7 +1560,7 @@ export const ndiff = function(
  *   'tree\n',
  *   'emu\n' ]
  */
-export const restore = function(delta: string[], which: number) {
+export const restore = function (delta: string[], which: number) {
   const tag = { 1: '- ', 2: '+ ' }[which];
   if (!tag) throw new Error(`unknown delta choice (must be 1 or 2): ${which}`);
   const prefixes = ['  ', tag];
@@ -1520,13 +1573,3 @@ export const restore = function(delta: string[], which: number) {
   }
   return lines;
 };
-
-function __range__(left: number, right: number, inclusive: boolean) {
-  const range = [];
-  const ascending = left < right;
-  const end = !inclusive ? right : ascending ? right + 1 : right - 1;
-  for (let i = left; ascending ? i < end : i > end; ascending ? i++ : i--) {
-    range.push(i);
-  }
-  return range;
-}
